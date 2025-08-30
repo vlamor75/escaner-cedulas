@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escáner de Cédulas</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Escáner de Cédulas</h1>
+        
+        <!-- Área del escáner -->
+        <div id="scanner-container">
+            <video id="video" autoplay muted></video>
+            <div id="overlay"></div>
+        </div>
+        
+        <!-- Input manual como backup -->
+        <div class="manual-input">
+            <input type="text" id="manual-cedula" placeholder="O ingresa la cédula manualmente">
+            <button onclick="buscarCedula()">Buscar</button>
+        </div>
+        
+        <!-- Botones -->
+        <div class="buttons">
+            <button id="start-scan" onclick="iniciarEscaner()">Iniciar Escáner</button>
+            <button id="stop-scan" onclick="detenerEscaner()" style="display:none;">Detener</button>
+        </div>
+        
+        <!-- Resultado -->
+        <div id="resultado"></div>
+        
+        <!-- URL del Google Sheet -->
+        <div class="config">
+            <label>URL del Google Sheet (CSV):</label>
+            <input type="url" id="sheet-url" placeholder="Pega aquí la URL de tu Google Sheet en formato CSV">
+            <button onclick="guardarURL()">Guardar URL</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
