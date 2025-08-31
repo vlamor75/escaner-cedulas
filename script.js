@@ -44,7 +44,7 @@ async function cargarDatosSheet(url) {
     }
 }
 
-// Iniciar escáner
+// Iniciar escáner simplificado
 async function iniciarEscaner() {
     try {
         // Verificar si hay URL configurada
@@ -77,45 +77,19 @@ async function iniciarEscaner() {
         document.getElementById('stop-scan').style.display = 'inline-block';
         
         scanning = true;
+        mostrarResultado('📷 Cámara activa. Usa el campo manual para buscar cédulas.', 'encontrado');
         
-        // Inicializar QuaggaJS para escaneo de códigos
-        Quagga.init({
-            inputStream: {
-                name: "Live",
-                type: "LiveStream",
-                target: video,
-                constraints: {
-                    width: 640,
-                    height: 480,
-                    facingMode: "environment"
-                }
-            },
-            decoder: {
-                readers: [
-                    "code_128_reader",
-                    "ean_reader",
-                    "ean_8_reader",
-                    "code_39_reader"
-                ]
-            }
-        }, function(err) {
-            if (err) {
-                console.log('Error iniciando Quagga:', err);
-                // Si falla el escáner, al menos mostrar el video
-                mostrarResultado('Cámara iniciada. Escáner de códigos no disponible, usa input manual', 'no-encontrado');
+        // Intentar escáner automático cada 2 segundos
+        const scanInterval = setInterval(() => {
+            if (!scanning) {
+                clearInterval(scanInterval);
                 return;
             }
-            Quagga.start();
-        });
-        
-        // Escuchar detecciones
-        Quagga.onDetected(function(data) {
-            if (scanning) {
-                const codigo = data.codeResult.code;
-                console.log('Código detectado:', codigo);
-                buscarCedulaEnDatos(codigo);
-            }
-        });
+            
+            // Aquí podrías agregar lógica de OCR o procesamiento de imagen
+            // Por ahora, simplemente recordamos al usuario usar el input manual
+            
+        }, 2000);
         
     } catch (error) {
         console.error('Error accediendo a la cámara:', error);
@@ -130,10 +104,6 @@ function detenerEscaner() {
         stream = null;
     }
     
-    if (typeof Quagga !== 'undefined') {
-        Quagga.stop();
-    }
-    
     scanning = false;
     
     // Mostrar/ocultar botones
@@ -142,6 +112,8 @@ function detenerEscaner() {
     
     const video = document.getElementById('video');
     video.srcObject = null;
+    
+    mostrarResultado('', '');
 }
 
 // Buscar cédula (desde input manual)
@@ -176,11 +148,18 @@ function buscarCedulaEnDatos(cedula) {
             'encontrado'
         );
         
-        // Aquí podrías hacer una llamada para marcar/resaltar en el Sheet
-        // Por ahora solo mostramos el resultado
+        // Vibrar si está disponible
+        if (navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]);
+        }
         
     } else {
         mostrarResultado('❌ CÉDULA NO EXISTE', 'no-encontrado');
+        
+        // Vibración de error
+        if (navigator.vibrate) {
+            navigator.vibrate([500]);
+        }
     }
 }
 
@@ -191,10 +170,17 @@ function mostrarResultado(mensaje, tipo) {
     resultado.className = tipo;
     resultado.style.display = 'block';
     
+    if (!mensaje) {
+        resultado.style.display = 'none';
+        return;
+    }
+    
     // Ocultar después de 5 segundos si es exitoso
     if (tipo === 'encontrado') {
         setTimeout(() => {
-            resultado.style.display = 'none';
+            if (resultado.innerHTML === mensaje) { // Solo ocultar si es el mismo mensaje
+                resultado.style.display = 'none';
+            }
         }, 5000);
     }
 }
@@ -204,4 +190,9 @@ document.getElementById('manual-cedula').addEventListener('keypress', function(e
     if (e.key === 'Enter') {
         buscarCedula();
     }
+});
+
+// Hacer el input más grande en móviles
+document.getElementById('manual-cedula').addEventListener('focus', function() {
+    this.style.fontSize = '16px'; // Previene zoom en iOS
 });
