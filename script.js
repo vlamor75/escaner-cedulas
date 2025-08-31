@@ -1,21 +1,92 @@
-// URL fija de tu Google Sheet CSV
+// Configuración
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSHSkIJWa2Ac2IhTjzcclUIWEWcdIzX8_2pEOLBQZ8QiIjiautmRYf-QWQpP9LnbAsricEF617yAv6V/pub?gid=0&single=true&output=csv';
+const SPREADSHEET_ID = '183ahrrdVdI8nT8dQfR-k1xI0ReqCtaVNZCg3LjP2oSw';
+const CLIENT_ID = '126302235387-6akve29ev699n4qu7mmc4vhp3n0phdtb.apps.googleusercontent.com';
+const API_KEY = 'AIzaSyDc2QXU57bYL-wKcB0yWMqZObZbNhs1Fn4';
+const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
+const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 
 let datosSheet = [];
 let stream = null;
 let scanning = false;
+let gapi;
+let isSignedIn = false;
+let gapiLoaded = false;
 
-// Cargar datos automáticamente al iniciar
-document.addEventListener('DOMContentLoaded', function() {
-    cargarDatos();
-    // Ocultar configuración de URL ya que es fija
+// Cargar Google API
+function loadGoogleAPI() {
+    const script = document.createElement('script');
+    script.src = 'https://apis.google.com/js/api.js';
+    script.onload = initializeGapi;
+    document.head.appendChild(script);
+}
+
+// Inicializar Google API
+async function initializeGapi() {
+    return new Promise((resolve) => {
+        gapi.load('auth2:client', async () => {
+            try {
+                await gapi.client.init({
+                    apiKey: API_KEY,
+                    clientId: CLIENT_ID,
+                    discoveryDocs: [DISCOVERY_DOC],
+                    scope: SCOPES
+                });
+                
+                const authInstance = gapi.auth2.getAuthInstance();
+                isSignedIn = authInstance.isSignedIn.get();
+                gapiLoaded = true;
+                
+                console.log('Google API inicializada. Signed in:', isSignedIn);
+                resolve();
+                
+            } catch (error) {
+                console.error('Error inicializando Google API:', error);
+                gapiLoaded = false;
+                resolve();
+            }
+        });
+    });
+}
+
+// Cargar datos y API al iniciar
+document.addEventListener('DOMContentLoaded', async function() {
+    // Ocultar configuración
     const configDiv = document.querySelector('.config');
     if (configDiv) {
         configDiv.style.display = 'none';
     }
+    
+    // Cargar datos CSV
+    await cargarDatos();
+    
+    // Cargar Google API en paralelo
+    loadGoogleAPI();
+    
+    // Configurar eventos
+    setupEventListeners();
 });
 
-// Cargar datos del Google Sheet
+// Configurar event listeners
+function setupEventListeners() {
+    const input = document.getElementById('manual-cedula');
+    
+    input.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            buscarCedula();
+        }
+    });
+    
+    input.addEventListener('focus', function() {
+        this.style.fontSize = '16px';
+    });
+    
+    input.addEventListener('input', function() {
+        this.value = this.value.replace(/[^0-9]/g, '');
+    });
+}
+
+// Cargar datos del CSV
 async function cargarDatos() {
     try {
         mostrarResultado('🔄 Cargando datos...', 'encontrado');
@@ -23,7 +94,6 @@ async function cargarDatos() {
         const response = await fetch(CSV_URL);
         const csvData = await response.text();
         
-        // Parsear CSV línea por línea
         const lineas = csvData.split('\n');
         datosSheet = [];
         
@@ -46,9 +116,8 @@ async function cargarDatos() {
         });
         
         console.log('Datos cargados:', datosSheet.length, 'registros');
-        mostrarResultado(`✅ ${datosSheet.length} registros cargados y listos`, 'encontrado');
+        mostrarResultado(`✅ ${datosSheet.length} registros cargados`, 'encontrado');
         
-        // Auto ocultar después de 3 segundos
         setTimeout(() => {
             const resultado = document.getElementById('resultado');
             if (resultado && resultado.innerHTML.includes('registros cargados')) {
@@ -58,26 +127,181 @@ async function cargarDatos() {
         
     } catch (error) {
         console.error('Error cargando datos:', error);
-        mostrarResultado('❌ Error cargando datos del Google Sheet', 'no-encontrado');
+        mostrarResultado('❌ Error cargando datos', 'no-encontrado');
     }
 }
 
-// Iniciar cámara (solo visual)
+// Autorizar con Google
+async function authorize() {
+    if (!gapiLoaded) {
+        mostrarResultado('⏳ Cargando Google API...', 'encontrado');
+        await initializeGapi();
+    }
+    
+    try {
+        const authInstance = gapi.auth2.getAuthInstance();
+        if (!authInstance.isSignedIn.get()) {
+            await authInstance.signIn();
+        }
+        isSignedIn = true;
+        mostrarResultado('✅ Autorizado con Google', 'encontrado');
+        return true;
+    } catch (error) {
+        console.error('Error de autorización:', error);
+        mostrarResultado('❌ Error de autorización. Inténtalo de nuevo.', 'no-encontrado');
+        return false;
+    }
+}
+
+// Resaltar fila en Google Sheets
+async function resaltarFila(numeroFila) {
+    if (!gapiLoaded) {
+        console.log('API no cargada, esperando...');
+        return false;
+    }
+    
+    if (!isSignedIn) {
+        console.log('No autorizado, pidiendo autorización...');
+        const authorized = await authorize();
+        if (!authorized) return false;
+    }
+    
+    try {
+        const requests = [{
+            updateCells: {
+                range: {
+                    sheetId: 0,
+                    startRowIndex: numeroFila - 1,
+                    endRowIndex: numeroFila,
+                    startColumnIndex: 0,
+                    endColumnIndex: 10
+                },
+                rows: [{
+                    values: Array(10).fill({
+                        userEnteredFormat: {
+                            backgroundColor: {
+                                red: 0.5,   // Verde oliva
+                                green: 0.7,
+                                blue: 0.2,
+                                alpha: 1.0
+                            }
+                        }
+                    })
+                }],
+                fields: 'userEnteredFormat.backgroundColor'
+            }
+        }];
+        
+        await gapi.client.sheets.spreadsheets.batchUpdate({
+            spreadsheetId: SPREADSHEET_ID,
+            requestBody: { requests }
+        });
+        
+        console.log(`Fila ${numeroFila} resaltada exitosamente`);
+        return true;
+        
+    } catch (error) {
+        console.error('Error resaltando fila:', error);
+        
+        if (error.status === 401 || error.status === 403) {
+            console.log('Error de permisos, pidiendo autorización...');
+            const authorized = await authorize();
+            if (authorized) {
+                return await resaltarFila(numeroFila);
+            }
+        }
+        
+        return false;
+    }
+}
+
+// Buscar cédula
+function buscarCedula() {
+    const input = document.getElementById('manual-cedula');
+    const cedula = input.value.trim();
+    
+    if (cedula) {
+        buscarCedulaEnDatos(cedula);
+        input.value = '';
+        input.focus();
+    }
+}
+
+// Buscar en datos y resaltar
+async function buscarCedulaEnDatos(cedula) {
+    console.log('Buscando cédula:', cedula);
+    
+    if (!datosSheet.length) {
+        mostrarResultado('❌ Datos no cargados aún', 'no-encontrado');
+        return;
+    }
+    
+    const encontrado = datosSheet.find(persona => 
+        persona.cedula === cedula || 
+        persona.cedula === cedula.toString()
+    );
+    
+    if (encontrado) {
+        // Mostrar encontrado inmediatamente
+        mostrarResultado(
+            `✅ ENCONTRADO<br>
+            <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
+            <strong>Cédula:</strong> ${encontrado.cedula}<br>
+            <strong>Email:</strong> ${encontrado.email}<br>
+            <small>🎨 Resaltando fila ${encontrado.fila}...</small>`, 
+            'encontrado'
+        );
+        
+        // Vibrar
+        if (navigator.vibrate) {
+            navigator.vibrate([200, 100, 200]);
+        }
+        
+        // Resaltar en Google Sheets
+        setTimeout(async () => {
+            const resaltado = await resaltarFila(encontrado.fila);
+            
+            if (resaltado) {
+                mostrarResultado(
+                    `✅ ENCONTRADO Y RESALTADO<br>
+                    <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
+                    <strong>Cédula:</strong> ${encontrado.cedula}<br>
+                    <strong>Email:</strong> ${encontrado.email}<br>
+                    <small style="color: green;">🎨 Fila ${encontrado.fila} resaltada en verde oliva</small>`, 
+                    'encontrado'
+                );
+            } else {
+                mostrarResultado(
+                    `✅ ENCONTRADO<br>
+                    <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
+                    <strong>Cédula:</strong> ${encontrado.cedula}<br>
+                    <strong>Email:</strong> ${encontrado.email}<br>
+                    <small style="color: orange;">⚠️ No se pudo resaltar. <button onclick="authorize()" style="font-size:12px;">Autorizar Google</button></small>`, 
+                    'encontrado'
+                );
+            }
+        }, 500);
+        
+    } else {
+        mostrarResultado(`❌ CÉDULA NO EXISTE<br><small>No encontrado: ${cedula}</small>`, 'no-encontrado');
+        
+        if (navigator.vibrate) {
+            navigator.vibrate([500]);
+        }
+    }
+}
+
+// Funciones de cámara (mantenidas pero simplificadas)
 async function iniciarEscaner() {
     try {
         if (!datosSheet.length) {
-            mostrarResultado('❌ Esperando que carguen los datos...', 'no-encontrado');
+            mostrarResultado('❌ Esperando datos...', 'no-encontrado');
             return;
         }
 
         const video = document.getElementById('video');
-        
         stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: 'environment',
-                width: { ideal: 640 },
-                height: { ideal: 480 }
-            }
+            video: { facingMode: 'environment' }
         });
         
         video.srcObject = stream;
@@ -87,15 +311,13 @@ async function iniciarEscaner() {
         document.getElementById('stop-scan').style.display = 'inline-block';
         
         scanning = true;
-        mostrarResultado('📷 Cámara activa. Escribe la cédula en el campo de abajo.', 'encontrado');
+        mostrarResultado('📷 Cámara activa. Usa el campo manual.', 'encontrado');
         
     } catch (error) {
-        console.error('Error con cámara:', error);
-        mostrarResultado('❌ No se puede usar la cámara. Usa el campo manual.', 'no-encontrado');
+        mostrarResultado('❌ Error con cámara. Usa input manual.', 'no-encontrado');
     }
 }
 
-// Detener cámara
 function detenerEscaner() {
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
@@ -103,89 +325,14 @@ function detenerEscaner() {
     }
     
     scanning = false;
-    
     document.getElementById('start-scan').style.display = 'inline-block';
     document.getElementById('stop-scan').style.display = 'none';
     
     const video = document.getElementById('video');
     video.srcObject = null;
-    
-    // Limpiar resultado
-    const resultado = document.getElementById('resultado');
-    if (resultado && resultado.innerHTML.includes('Cámara activa')) {
-        resultado.style.display = 'none';
-    }
 }
 
-// Buscar cédula desde input manual
-function buscarCedula() {
-    const input = document.getElementById('manual-cedula');
-    const cedula = input.value.trim();
-    
-    if (cedula) {
-        buscarCedulaEnDatos(cedula);
-        input.value = ''; // Limpiar campo
-        input.focus(); // Mantener foco para siguiente búsqueda
-    }
-}
-
-// Buscar en los datos cargados
-function buscarCedulaEnDatos(cedula) {
-    console.log('Buscando cédula:', cedula);
-    
-    if (!datosSheet.length) {
-        mostrarResultado('❌ Los datos aún no están cargados. Espera un momento.', 'no-encontrado');
-        return;
-    }
-    
-    // Buscar coincidencia exacta
-    const encontrado = datosSheet.find(persona => 
-        persona.cedula === cedula || 
-        persona.cedula === cedula.toString()
-    );
-    
-    if (encontrado) {
-        mostrarResultado(
-            `✅ ENCONTRADO<br>
-            <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
-            <strong>Cédula:</strong> ${encontrado.cedula}<br>
-            <strong>Email:</strong> ${encontrado.email}<br>
-            <small style="color: #666;">Registro en fila ${encontrado.fila}</small>`, 
-            'encontrado'
-        );
-        
-        // Vibrar si está disponible
-        if (navigator.vibrate) {
-            navigator.vibrate([200, 100, 200]); // Patrón: vibrar-pausa-vibrar
-        }
-        
-        // Auto ocultar después de 8 segundos
-        setTimeout(() => {
-            const resultado = document.getElementById('resultado');
-            if (resultado && resultado.innerHTML.includes(encontrado.nombre)) {
-                resultado.style.display = 'none';
-            }
-        }, 8000);
-        
-    } else {
-        mostrarResultado(`❌ CÉDULA NO EXISTE<br><small>No se encontró: ${cedula}</small>`, 'no-encontrado');
-        
-        // Vibrar patrón de error
-        if (navigator.vibrate) {
-            navigator.vibrate([500]); // Vibración larga de error
-        }
-        
-        // Auto ocultar después de 4 segundos
-        setTimeout(() => {
-            const resultado = document.getElementById('resultado');
-            if (resultado && resultado.innerHTML.includes('NO EXISTE')) {
-                resultado.style.display = 'none';
-            }
-        }, 4000);
-    }
-}
-
-// Mostrar resultado en pantalla
+// Mostrar resultado
 function mostrarResultado(mensaje, tipo) {
     const resultado = document.getElementById('resultado');
     if (resultado) {
@@ -199,35 +346,10 @@ function mostrarResultado(mensaje, tipo) {
     }
 }
 
-// Función para mantener compatibilidad con botón "Guardar URL" (aunque está oculto)
+// Función dummy para compatibilidad
 function guardarURL() {
-    mostrarResultado('ℹ️ La URL ya está configurada automáticamente', 'encontrado');
+    mostrarResultado('ℹ️ URL ya configurada', 'encontrado');
     setTimeout(() => {
         document.getElementById('resultado').style.display = 'none';
     }, 2000);
 }
-
-// Eventos del input
-document.addEventListener('DOMContentLoaded', function() {
-    const input = document.getElementById('manual-cedula');
-    
-    // Buscar al presionar Enter
-    input.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            buscarCedula();
-        }
-    });
-    
-    // Evitar zoom en iOS
-    input.addEventListener('focus', function() {
-        this.style.fontSize = '16px';
-    });
-    
-    // Permitir solo números
-    input.addEventListener('input', function() {
-        this.value = this.value.replace(/[^0-9]/g, '');
-    });
-});
-
-// Log para debug
-console.log('App iniciada - Versión simple sin APIs de Google');
