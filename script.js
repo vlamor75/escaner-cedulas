@@ -2,7 +2,7 @@
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSHSkIJWa2Ac2IhTjzcclUIWEWcdIzX8_2pEOLBQZ8QiIjiautmRYf-QWQpP9LnbAsricEF617yAv6V/pub?gid=0&single=true&output=csv';
 
 // URL de tu Google Apps Script Web App
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkb8Gr9djEGppAS6-rqgzHi-ctPseXoGpsROdmO3z4kUMpv7v0iV8YGrKiGAIkLu6Zjg/exec';
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxAznJoo2V0TvMnPyL8glN4sPDH8ZkVS4aDaDGjEeMqb7HziS-W0R1GidkSRgGuf4hBMQ/exec';
 
 let datosSheet = [];
 let stream = null;
