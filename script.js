@@ -2,115 +2,188 @@
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSHSkIJWa2Ac2IhTjzcclUIWEWcdIzX8_2pEOLBQZ8QiIjiautmRYf-QWQpP9LnbAsricEF617yAv6V/pub?gid=0&single=true&output=csv';
 const SPREADSHEET_ID = '183ahrrdVdI8nT8dQfR-k1xI0ReqCtaVNZCg3LjP2oSw';
 const CLIENT_ID = '126302235387-6akve29ev699n4qu7mmc4vhp3n0phdtb.apps.googleusercontent.com';
-const API_KEY = 'AIzaSyDc2QXU57bYL-wKcB0yWMqZObZbNhs1Fn4';
-const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 
 let datosSheet = [];
 let stream = null;
 let scanning = false;
-let isSignedIn = false;
-let gapiLoaded = false;
-let apiInitialized = false;
+let accessToken = null;
+let tokenClient = null;
+let gapiInited = false;
+let gisInited = false;
 
-// Variable global para verificar si gapi está disponible
-let gapiCheckInterval;
+// Cargar Google APIs (nueva versión)
+function loadGoogleAPIs() {
+    // Cargar Google API Client
+    const gapiScript = document.createElement('script');
+    gapiScript.src = 'https://apis.google.com/js/api.js';
+    gapiScript.onload = gapiLoaded;
+    gapiScript.onerror = () => {
+        console.error('Error cargando GAPI');
+        mostrarEstadoAPI('❌ Error cargando Google API');
+    };
+    document.head.appendChild(gapiScript);
 
-// Cargar Google API de forma más robusta
-function loadGoogleAPI() {
-    return new Promise((resolve, reject) => {
-        // Verificar si ya está cargado
-        if (window.gapi) {
-            console.log('GAPI ya estaba cargado');
-            resolve();
-            return;
-        }
-
-        const script = document.createElement('script');
-        script.src = 'https://apis.google.com/js/api.js';
-        script.async = true;
-        script.defer = true;
-        
-        script.onload = () => {
-            console.log('Script GAPI cargado');
-            // Esperar a que gapi esté disponible
-            let attempts = 0;
-            const maxAttempts = 50;
-            
-            gapiCheckInterval = setInterval(() => {
-                attempts++;
-                if (window.gapi) {
-                    clearInterval(gapiCheckInterval);
-                    console.log('GAPI disponible después de', attempts, 'intentos');
-                    resolve();
-                } else if (attempts >= maxAttempts) {
-                    clearInterval(gapiCheckInterval);
-                    console.error('GAPI no se cargó después de', attempts, 'intentos');
-                    reject(new Error('GAPI no disponible'));
-                }
-            }, 100);
-        };
-        
-        script.onerror = () => {
-            console.error('Error cargando script GAPI');
-            reject(new Error('Error cargando GAPI script'));
-        };
-        
-        document.head.appendChild(script);
-    });
+    // Cargar Google Identity Services
+    const gisScript = document.createElement('script');
+    gisScript.src = 'https://accounts.google.com/gsi/client';
+    gisScript.onload = gisLoaded;
+    gisScript.onerror = () => {
+        console.error('Error cargando GIS');
+        mostrarEstadoAPI('❌ Error cargando Google Identity');
+    };
+    document.head.appendChild(gisScript);
 }
 
-// Inicializar Google API
-async function initializeGapi() {
-    try {
-        console.log('Inicializando GAPI...');
-        
-        if (!window.gapi) {
-            throw new Error('GAPI no está disponible');
-        }
+// GAPI cargado
+async function gapiLoaded() {
+    await gapi.load('client', initializeGapiClient);
+}
 
-        return new Promise((resolve, reject) => {
-            window.gapi.load('auth2:client', {
-                callback: async () => {
-                    try {
-                        console.log('Cargando cliente GAPI...');
-                        
-                        await window.gapi.client.init({
-                            apiKey: API_KEY,
-                            clientId: CLIENT_ID,
-                            discoveryDocs: [DISCOVERY_DOC],
-                            scope: SCOPES
-                        });
-                        
-                        const authInstance = window.gapi.auth2.getAuthInstance();
-                        isSignedIn = authInstance.isSignedIn.get();
-                        gapiLoaded = true;
-                        apiInitialized = true;
-                        
-                        console.log('GAPI inicializado exitosamente. Autorizado:', isSignedIn);
-                        resolve();
-                        
-                    } catch (error) {
-                        console.error('Error inicializando cliente GAPI:', error);
-                        reject(error);
-                    }
-                },
-                onerror: (error) => {
-                    console.error('Error cargando módulos GAPI:', error);
-                    reject(error);
-                }
-            });
+// Inicializar cliente GAPI
+async function initializeGapiClient() {
+    try {
+        await gapi.client.init({
+            discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4'],
         });
-        
+        gapiInited = true;
+        console.log('GAPI inicializado');
+        checkAPIsReady();
     } catch (error) {
-        console.error('Error en initializeGapi:', error);
-        gapiLoaded = false;
-        apiInitialized = false;
-        throw error;
+        console.error('Error inicializando GAPI:', error);
+        mostrarEstadoAPI('❌ Error inicializando Google API');
     }
 }
 
-// Cargar datos y API al iniciar
+// GIS cargado
+function gisLoaded() {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: (response) => {
+            if (response.error !== undefined) {
+                console.error('Error de autenticación:', response);
+                mostrarResultado('❌ Error de autenticación', 'no-encontrado');
+                return;
+            }
+            accessToken = response.access_token;
+            console.log('Token obtenido exitosamente');
+            mostrarResultado('✅ Autorizado con Google', 'encontrado');
+        },
+    });
+    gisInited = true;
+    console.log('GIS inicializado');
+    checkAPIsReady();
+}
+
+// Verificar si las APIs están listas
+function checkAPIsReady() {
+    if (gapiInited && gisInited) {
+        console.log('Todas las APIs están listas');
+        mostrarEstadoAPI('✅ Google APIs listas');
+    }
+}
+
+// Mostrar estado de la API
+function mostrarEstadoAPI(mensaje) {
+    console.log(mensaje);
+    // Solo mostrar en consola para no saturar la interfaz
+}
+
+// Solicitar autorización
+function authorize() {
+    if (!gisInited) {
+        mostrarResultado('⏳ Preparando autorización...', 'encontrado');
+        return;
+    }
+    
+    if (accessToken) {
+        console.log('Ya tienes token válido');
+        mostrarResultado('✅ Ya estás autorizado', 'encontrado');
+        return;
+    }
+
+    mostrarResultado('🔐 Solicitando permisos de Google...', 'encontrado');
+    tokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+// Revocar autorización
+function revokeAuthorization() {
+    if (accessToken) {
+        google.accounts.oauth2.revoke(accessToken);
+        accessToken = null;
+        mostrarResultado('🚪 Autorización revocada', 'no-encontrado');
+    }
+}
+
+// Resaltar fila en Google Sheets
+async function resaltarFila(numeroFila) {
+    if (!gapiInited) {
+        console.log('GAPI no inicializado');
+        return false;
+    }
+    
+    if (!accessToken) {
+        console.log('Sin token de acceso, solicitando autorización...');
+        authorize();
+        return false;
+    }
+
+    try {
+        console.log(`Resaltando fila ${numeroFila}...`);
+        
+        // Configurar token de acceso
+        gapi.client.setToken({ access_token: accessToken });
+        
+        const requests = [{
+            updateCells: {
+                range: {
+                    sheetId: 0,
+                    startRowIndex: numeroFila - 1,
+                    endRowIndex: numeroFila,
+                    startColumnIndex: 0,
+                    endColumnIndex: 10
+                },
+                rows: [{
+                    values: Array(10).fill({
+                        userEnteredFormat: {
+                            backgroundColor: {
+                                red: 0.5,   // Verde oliva
+                                green: 0.7,
+                                blue: 0.2,
+                                alpha: 1.0
+                            }
+                        }
+                    })
+                }],
+                fields: 'userEnteredFormat.backgroundColor'
+            }
+        }];
+        
+        const response = await gapi.client.sheets.spreadsheets.batchUpdate({
+            spreadsheetId: SPREADSHEET_ID,
+            requestBody: { requests }
+        });
+        
+        console.log(`Fila ${numeroFila} resaltada exitosamente`);
+        return true;
+        
+    } catch (error) {
+        console.error('Error resaltando fila:', error);
+        
+        if (error.status === 401) {
+            console.log('Token expirado, solicitando nuevo...');
+            accessToken = null;
+            authorize();
+            return false;
+        }
+        
+        mostrarResultado('❌ Error resaltando en Google Sheets', 'no-encontrado');
+        return false;
+    }
+}
+
+// Cargar datos al iniciar
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('DOM cargado, iniciando app...');
     
@@ -120,22 +193,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         configDiv.style.display = 'none';
     }
     
-    // Cargar datos CSV primero
+    // Cargar datos CSV
     await cargarDatos();
     
     // Configurar eventos
     setupEventListeners();
     
-    // Cargar Google API en segundo plano
-    try {
-        console.log('Cargando Google API...');
-        await loadGoogleAPI();
-        await initializeGapi();
-        console.log('Google API lista para usar');
-    } catch (error) {
-        console.error('No se pudo cargar Google API:', error);
-        mostrarResultado('⚠️ Google API no disponible. Búsqueda funcionará, pero sin resaltado.', 'no-encontrado');
-    }
+    // Cargar Google APIs
+    loadGoogleAPIs();
 });
 
 // Configurar event listeners
@@ -202,113 +267,6 @@ async function cargarDatos() {
     }
 }
 
-// Autorizar con Google
-async function authorize() {
-    console.log('Intentando autorizar...');
-    
-    try {
-        // Verificar si API está lista
-        if (!apiInitialized) {
-            console.log('API no inicializada, intentando cargar...');
-            mostrarResultado('⏳ Preparando Google API...', 'encontrado');
-            
-            try {
-                await loadGoogleAPI();
-                await initializeGapi();
-            } catch (error) {
-                console.error('No se pudo cargar API:', error);
-                mostrarResultado('❌ No se pudo conectar con Google. Inténtalo más tarde.', 'no-encontrado');
-                return false;
-            }
-        }
-        
-        console.log('Solicitando autorización...');
-        mostrarResultado('🔐 Solicitando permisos...', 'encontrado');
-        
-        const authInstance = window.gapi.auth2.getAuthInstance();
-        
-        if (!authInstance.isSignedIn.get()) {
-            await authInstance.signIn();
-        }
-        
-        isSignedIn = true;
-        mostrarResultado('✅ Autorizado con Google', 'encontrado');
-        console.log('Autorización exitosa');
-        
-        return true;
-        
-    } catch (error) {
-        console.error('Error de autorización:', error);
-        mostrarResultado('❌ Error de autorización. Verifica permisos.', 'no-encontrado');
-        return false;
-    }
-}
-
-// Resaltar fila en Google Sheets
-async function resaltarFila(numeroFila) {
-    if (!apiInitialized) {
-        console.log('API no inicializada para resaltar');
-        return false;
-    }
-    
-    if (!isSignedIn) {
-        console.log('No autorizado, solicitando autorización...');
-        const authorized = await authorize();
-        if (!authorized) return false;
-    }
-    
-    try {
-        console.log(`Resaltando fila ${numeroFila}...`);
-        
-        const requests = [{
-            updateCells: {
-                range: {
-                    sheetId: 0,
-                    startRowIndex: numeroFila - 1,
-                    endRowIndex: numeroFila,
-                    startColumnIndex: 0,
-                    endColumnIndex: 10
-                },
-                rows: [{
-                    values: Array(10).fill({
-                        userEnteredFormat: {
-                            backgroundColor: {
-                                red: 0.5,   // Verde oliva
-                                green: 0.7,
-                                blue: 0.2,
-                                alpha: 1.0
-                            }
-                        }
-                    })
-                }],
-                fields: 'userEnteredFormat.backgroundColor'
-            }
-        }];
-        
-        const response = await window.gapi.client.sheets.spreadsheets.batchUpdate({
-            spreadsheetId: SPREADSHEET_ID,
-            requestBody: { requests }
-        });
-        
-        console.log(`Fila ${numeroFila} resaltada exitosamente`, response);
-        return true;
-        
-    } catch (error) {
-        console.error('Error resaltando fila:', error);
-        
-        if (error.status === 401 || error.status === 403) {
-            console.log('Error de permisos, reintentando autorización...');
-            isSignedIn = false;
-            const authorized = await authorize();
-            if (authorized) {
-                return await resaltarFila(numeroFila);
-            }
-        }
-        
-        return false;
-    }
-}
-
 // Buscar cédula
 function buscarCedula() {
     const input = document.getElementById('manual-cedula');
@@ -351,41 +309,35 @@ async function buscarCedulaEnDatos(cedula) {
             navigator.vibrate([200, 100, 200]);
         }
         
-        // Intentar resaltar en Google Sheets
+        // Intentar resaltar después de un momento
         setTimeout(async () => {
-            if (apiInitialized) {
-                const resaltado = await resaltarFila(encontrado.fila);
-                
-                if (resaltado) {
-                    mostrarResultado(
-                        `✅ ENCONTRADO Y RESALTADO<br>
-                        <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
-                        <strong>Cédula:</strong> ${encontrado.cedula}<br>
-                        <strong>Email:</strong> ${encontrado.email}<br>
-                        <small style="color: green;">🎨 Fila ${encontrado.fila} resaltada en verde oliva</small>`, 
-                        'encontrado'
-                    );
-                } else {
-                    mostrarResultado(
-                        `✅ ENCONTRADO<br>
-                        <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
-                        <strong>Cédula:</strong> ${encontrado.cedula}<br>
-                        <strong>Email:</strong> ${encontrado.email}<br>
-                        <small style="color: orange;">⚠️ No se pudo resaltar. <button onclick="authorize()" style="font-size:12px; padding:2px 8px; background:#4285f4; color:white; border:none; border-radius:3px; cursor:pointer;">Autorizar Google</button></small>`, 
-                        'encontrado'
-                    );
-                }
+            const resaltado = await resaltarFila(encontrado.fila);
+            
+            if (resaltado) {
+                mostrarResultado(
+                    `✅ ENCONTRADO Y RESALTADO<br>
+                    <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
+                    <strong>Cédula:</strong> ${encontrado.cedula}<br>
+                    <strong>Email:</strong> ${encontrado.email}<br>
+                    <small style="color: green;">🎨 Fila ${encontrado.fila} resaltada en verde oliva ✓</small>`, 
+                    'encontrado'
+                );
             } else {
+                const estadoAuth = accessToken ? 'Reintentando...' : 'Necesitas autorización';
+                const botonAuth = !accessToken ? 
+                    `<button onclick="authorize()" style="font-size:12px; padding:4px 12px; background:#4285f4; color:white; border:none; border-radius:4px; cursor:pointer; margin-left:10px;">Autorizar Google</button>` : 
+                    '';
+                    
                 mostrarResultado(
                     `✅ ENCONTRADO<br>
                     <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
                     <strong>Cédula:</strong> ${encontrado.cedula}<br>
                     <strong>Email:</strong> ${encontrado.email}<br>
-                    <small style="color: gray;">ℹ️ Google API no disponible (resaltado deshabilitado)</small>`, 
+                    <small style="color: orange;">⚠️ ${estadoAuth}${botonAuth}</small>`, 
                     'encontrado'
                 );
             }
-        }, 500);
+        }, 1000);
         
     } else {
         mostrarResultado(`❌ CÉDULA NO EXISTE<br><small>No encontrado: ${cedula}</small>`, 'no-encontrado');
@@ -396,7 +348,7 @@ async function buscarCedulaEnDatos(cedula) {
     }
 }
 
-// Funciones de cámara (simplificadas)
+// Funciones de cámara (mantenidas)
 async function iniciarEscaner() {
     try {
         if (!datosSheet.length) {
@@ -451,10 +403,14 @@ function mostrarResultado(mensaje, tipo) {
     }
 }
 
-// Función dummy para compatibilidad
+// Función para compatibilidad
 function guardarURL() {
-    mostrarResultado('ℹ️ URL ya configurada automáticamente', 'encontrado');
+    mostrarResultado('ℹ️ URL ya configurada', 'encontrado');
     setTimeout(() => {
         document.getElementById('resultado').style.display = 'none';
     }, 2000);
 }
+
+// Funciones globales para debug
+window.authorize = authorize;
+window.revokeAuthorization = revokeAuthorization;
