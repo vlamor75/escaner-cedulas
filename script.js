@@ -1,6 +1,6 @@
 // Configuración de Google Sheets API
 const CLIENT_ID = '126302235387-6akve29ev699n4qu7mmc4vhp3n0phdtb.apps.googleusercontent.com';
-const API_KEY = 'AIzaSyDc2QXU57bYL-wKcB0yWMqZObZbNhs1Fn4'; // Lo configuraremos después
+const API_KEY = 'AIzaSyDc2QXU57bYL-wKcB0yWMqZObZbNhs1Fn4';
 const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 
@@ -9,7 +9,7 @@ let datosSheet = [];
 let scanning = false;
 let gapi;
 let isSignedIn = false;
-let currentSpreadsheetId = '';
+let currentSpreadsheetId = '183ahrrdVdI8nT8dQfR-k1xI0ReqCtaVNZCg3LjP2oSw';
 
 // Cargar Google API
 function loadGoogleAPI() {
@@ -27,6 +27,7 @@ async function initializeGapi() {
     
     try {
         await gapi.client.init({
+            apiKey: API_KEY,
             clientId: CLIENT_ID,
             discoveryDocs: [DISCOVERY_DOC],
             scope: SCOPES
@@ -47,30 +48,27 @@ async function initializeGapi() {
 document.addEventListener('DOMContentLoaded', function() {
     loadGoogleAPI();
     
-    const savedUrl = localStorage.getItem('sheetUrl');
-    if (savedUrl) {
-        document.getElementById('sheet-url').value = savedUrl;
-        cargarDatosSheet(savedUrl);
-    }
+    // URL por defecto del CSV
+    const csvUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSHSkIJWa2Ac2IhTjzcclUIWEWcdIzX8_2pEOLBQZ8QiIjiautmRYf-QWQpP9LnbAsricEF617yAv6V/pub?gid=0&single=true&output=csv';
+    
+    const savedUrl = localStorage.getItem('sheetUrl') || csvUrl;
+    document.getElementById('sheet-url').value = savedUrl;
+    cargarDatosSheet(savedUrl);
 });
-
-// Extraer ID del spreadsheet de la URL
-function extractSpreadsheetId(url) {
-    const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    return match ? match[1] : null;
-}
 
 // Autorizar con Google
 async function authorize() {
     try {
         const authInstance = gapi.auth2.getAuthInstance();
-        await authInstance.signIn();
+        if (!authInstance.isSignedIn.get()) {
+            await authInstance.signIn();
+        }
         isSignedIn = true;
         mostrarResultado('✅ Autorizado con Google', 'encontrado');
         return true;
     } catch (error) {
         console.error('Error de autorización:', error);
-        mostrarResultado('❌ Error de autorización', 'no-encontrado');
+        mostrarResultado('❌ Error de autorización con Google', 'no-encontrado');
         return false;
     }
 }
@@ -79,12 +77,6 @@ async function authorize() {
 function guardarURL() {
     const url = document.getElementById('sheet-url').value;
     if (url) {
-        currentSpreadsheetId = extractSpreadsheetId(url);
-        if (!currentSpreadsheetId) {
-            mostrarResultado('❌ URL inválida. Usa una URL de Google Sheets', 'no-encontrado');
-            return;
-        }
-        
         localStorage.setItem('sheetUrl', url);
         cargarDatosSheet(url);
         mostrarResultado('✅ URL guardada correctamente', 'encontrado');
@@ -101,49 +93,45 @@ async function cargarDatosSheet(url) {
         datosSheet = csvData.split('\n').map((row, index) => {
             const cols = row.split(',');
             return {
-                fila: index + 1, // Número de fila para resaltar
+                fila: index + 1, // Número de fila para resaltar (empieza en 1)
                 cedula: cols[0]?.trim().replace(/"/g, ''),
                 nombre: cols[1]?.trim().replace(/"/g, ''),
                 email: cols[2]?.trim().replace(/"/g, '')
             };
-        }).filter(row => row.cedula); // Filtrar filas vacías
+        }).filter(row => row.cedula && row.cedula.length > 3); // Filtrar filas vacías o inválidas
         
         console.log('Datos cargados:', datosSheet.length, 'registros');
+        mostrarResultado(`📊 ${datosSheet.length} registros cargados`, 'encontrado');
     } catch (error) {
         console.error('Error cargando datos:', error);
         mostrarResultado('❌ Error cargando datos del Sheet', 'no-encontrado');
     }
 }
 
-// Resaltar fila en Google Sheets
+// Resaltar fila en Google Sheets con verde oliva
 async function resaltarFila(numeroFila) {
     if (!isSignedIn) {
         const authorized = await authorize();
         if (!authorized) return false;
     }
     
-    if (!currentSpreadsheetId) {
-        mostrarResultado('❌ No se puede resaltar: falta ID del spreadsheet', 'no-encontrado');
-        return false;
-    }
-    
     try {
         const requests = [{
             updateCells: {
                 range: {
-                    sheetId: 0,
-                    startRowIndex: numeroFila - 1,
+                    sheetId: 0, // Primera hoja
+                    startRowIndex: numeroFila - 1, // API usa índice 0
                     endRowIndex: numeroFila,
                     startColumnIndex: 0,
-                    endColumnIndex: 10
+                    endColumnIndex: 10 // Resaltar hasta columna J
                 },
                 rows: [{
                     values: Array(10).fill({
                         userEnteredFormat: {
                             backgroundColor: {
-                                red: 0.5,
-                                green: 0.7,
-                                blue: 0.2,
+                                red: 0.5,   // Verde oliva
+                                green: 0.7, // Verde oliva  
+                                blue: 0.2,  // Verde oliva
                                 alpha: 1.0
                             }
                         }
@@ -153,15 +141,26 @@ async function resaltarFila(numeroFila) {
             }
         }];
         
-        await gapi.client.sheets.spreadsheets.batchUpdate({
+        const response = await gapi.client.sheets.spreadsheets.batchUpdate({
             spreadsheetId: currentSpreadsheetId,
             requestBody: { requests }
         });
         
+        console.log('Fila resaltada:', response);
         return true;
+        
     } catch (error) {
         console.error('Error resaltando fila:', error);
-        mostrarResultado('❌ Error resaltando en Google Sheets', 'no-encontrado');
+        
+        // Si no está autorizado, intentar autorizar
+        if (error.status === 401) {
+            const authorized = await authorize();
+            if (authorized) {
+                return await resaltarFila(numeroFila); // Reintentar
+            }
+        }
+        
+        mostrarResultado('❌ Error resaltando en Google Sheets. ¿Necesitas autorizar?', 'no-encontrado');
         return false;
     }
 }
@@ -219,7 +218,7 @@ function detenerEscaner() {
     const video = document.getElementById('video');
     video.srcObject = null;
     
-    mostrarResultado('', '');
+    document.getElementById('resultado').style.display = 'none';
 }
 
 // Buscar cédula (desde input manual)
@@ -246,33 +245,38 @@ async function buscarCedulaEnDatos(cedula) {
     );
     
     if (encontrado) {
-        // Mostrar resultado
+        // Mostrar resultado inmediatamente
         mostrarResultado(
             `✅ ENCONTRADO<br>
             <strong>${encontrado.nombre}</strong><br>
             Cédula: ${encontrado.cedula}<br>
             Email: ${encontrado.email}<br>
-            <small>Resaltando fila ${encontrado.fila}...</small>`, 
+            <small>🎨 Resaltando fila ${encontrado.fila}...</small>`, 
             'encontrado'
         );
-        
-        // Resaltar fila en Google Sheets
-        const resaltado = await resaltarFila(encontrado.fila);
-        if (resaltado) {
-            setTimeout(() => {
-                mostrarResultado(
-                    `✅ ENCONTRADO Y RESALTADO<br>
-                    <strong>${encontrado.nombre}</strong><br>
-                    Cédula: ${encontrado.cedula}<br>
-                    Email: ${encontrado.email}`, 
-                    'encontrado'
-                );
-            }, 1000);
-        }
         
         // Vibrar si está disponible
         if (navigator.vibrate) {
             navigator.vibrate([200, 100, 200]);
+        }
+        
+        // Resaltar fila en Google Sheets
+        try {
+            const resaltado = await resaltarFila(encontrado.fila);
+            
+            if (resaltado) {
+                mostrarResultado(
+                    `✅ ENCONTRADO Y RESALTADO<br>
+                    <strong>${encontrado.nombre}</strong><br>
+                    Cédula: ${encontrado.cedula}<br>
+                    Email: ${encontrado.email}<br>
+                    <small>🎨 Fila ${encontrado.fila} resaltada en verde oliva</small>`, 
+                    'encontrado'
+                );
+            }
+        } catch (error) {
+            // Aunque falle el resaltado, ya tenemos el resultado
+            console.error('Error resaltando, pero persona encontrada:', error);
         }
         
     } else {
@@ -301,7 +305,7 @@ function mostrarResultado(mensaje, tipo) {
             if (resultado.innerHTML === mensaje) {
                 resultado.style.display = 'none';
             }
-        }, 8000); // Más tiempo para ver el resultado
+        }, 10000); // 10 segundos para ver el resultado completo
     }
 }
 
@@ -316,3 +320,17 @@ document.getElementById('manual-cedula').addEventListener('keypress', function(e
 document.getElementById('manual-cedula').addEventListener('focus', function() {
     this.style.fontSize = '16px';
 });
+
+// Botón para autorizar manualmente si es necesario
+function mostrarBotonAutorizar() {
+    const container = document.querySelector('.container');
+    const botonAuth = document.createElement('button');
+    botonAuth.innerHTML = '🔐 Autorizar Google Sheets';
+    botonAuth.onclick = authorize;
+    botonAuth.style.marginBottom = '20px';
+    botonAuth.style.backgroundColor = '#34A853';
+    container.insertBefore(botonAuth, document.getElementById('resultado'));
+}
+
+// Mostrar botón de autorización al cargar
+setTimeout(mostrarBotonAutorizar, 2000);
