@@ -4,9 +4,10 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwA0MinrCYcwyvi
 let stream = null;
 let scanning = false;
 let timeoutId = null;
+let tesseractWorker = null;
 
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('App iniciada - Solo Apps Script (limpia)');
+    console.log('App iniciada con OCR para cédulas colombianas');
     
     // Ocultar configuración
     const configDiv = document.querySelector('.config');
@@ -15,12 +16,31 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     setupEventListeners();
+    loadTesseract();
     
-    mostrarResultado('📱 Sistema conectado con Google Sheets - listo para usar', 'encontrado');
-    setTimeout(() => {
-        document.getElementById('resultado').style.display = 'none';
-    }, 3000);
+    mostrarResultado('📱 Cargando escáner OCR para cédulas colombianas...', 'encontrado');
 });
+
+// Cargar Tesseract.js para OCR
+async function loadTesseract() {
+    try {
+        // Cargar Tesseract desde CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js';
+        script.onload = async () => {
+            console.log('Tesseract cargado, inicializando worker...');
+            mostrarResultado('🔍 OCR listo - sistema preparado para escanear cédulas', 'encontrado');
+            
+            setTimeout(() => {
+                document.getElementById('resultado').style.display = 'none';
+            }, 3000);
+        };
+        document.head.appendChild(script);
+    } catch (error) {
+        console.error('Error cargando Tesseract:', error);
+        mostrarResultado('⚠️ OCR no disponible - usa input manual', 'no-encontrado');
+    }
+}
 
 function setupEventListeners() {
     const input = document.getElementById('manual-cedula');
@@ -39,7 +59,6 @@ function setupEventListeners() {
         this.value = this.value.replace(/[^0-9]/g, '');
     });
     
-    // Auto-focus inicial
     setTimeout(() => {
         input.focus();
     }, 1000);
@@ -48,31 +67,25 @@ function setupEventListeners() {
 function buscarYResaltarEnSheet(cedula) {
     console.log('Buscando cédula:', cedula);
     
-    // Limpiar timeout anterior si existe
     if (timeoutId) {
         clearTimeout(timeoutId);
     }
     
     mostrarResultado('🔄 Buscando y resaltando...', 'encontrado');
     
-    // Crear URL directa (sin JSONP)
     const url = `${APPS_SCRIPT_URL}?cedula=${encodeURIComponent(cedula)}`;
     
-    // Usar método iframe oculto para evitar CORS
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     iframe.src = url;
     
     document.body.appendChild(iframe);
     
-    // Asumir éxito después de 3 segundos (porque sabemos que funciona)
     timeoutId = setTimeout(() => {
-        // Remover iframe
         if (document.body.contains(iframe)) {
             document.body.removeChild(iframe);
         }
         
-        // Mostrar mensaje de éxito genérico
         mostrarResultado(
             `✅ BÚSQUEDA COMPLETADA<br>
             <strong style="font-size: 18px;">Cédula: ${cedula}</strong><br>
@@ -83,7 +96,6 @@ function buscarYResaltarEnSheet(cedula) {
             'encontrado'
         );
         
-        // Vibrar
         if (navigator.vibrate) {
             navigator.vibrate([200, 100, 200]);
         }
@@ -99,7 +111,6 @@ function buscarCedula() {
         buscarYResaltarEnSheet(cedula);
         input.value = '';
         
-        // Mantener foco para siguiente búsqueda
         setTimeout(() => {
             input.focus();
         }, 4000);
@@ -111,17 +122,72 @@ function buscarCedula() {
     }
 }
 
-// Iniciar escáner de cámara
+// Capturar imagen y procesar con OCR
+async function capturarYProcesarOCR() {
+    if (!window.Tesseract) {
+        mostrarResultado('❌ OCR no disponible - usa input manual', 'no-encontrado');
+        return;
+    }
+    
+    try {
+        const video = document.getElementById('video');
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        
+        // Configurar canvas
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Capturar frame actual
+        context.drawImage(video, 0, 0);
+        
+        // Convertir a imagen
+        const imageData = canvas.toDataURL('image/png');
+        
+        mostrarResultado('🔍 Procesando imagen con OCR...', 'encontrado');
+        
+        // Procesar con Tesseract
+        const result = await Tesseract.recognize(imageData, 'eng', {
+            tessedit_char_whitelist: '0123456789.',
+            psm: 6
+        });
+        
+        const texto = result.data.text;
+        console.log('Texto detectado:', texto);
+        
+        // Buscar números que parezcan cédulas (8-10 dígitos)
+        const numeros = texto.match(/\b\d{8,10}\b/g);
+        
+        if (numeros && numeros.length > 0) {
+            const cedula = numeros[0].replace(/\D/g, ''); // Solo números
+            
+            mostrarResultado(`📱 Cédula detectada: ${cedula}`, 'encontrado');
+            
+            setTimeout(() => {
+                buscarYResaltarEnSheet(cedula);
+            }, 1000);
+            
+        } else {
+            mostrarResultado('❌ No se detectó número de cédula. Intenta de nuevo o usa input manual.', 'no-encontrado');
+        }
+        
+    } catch (error) {
+        console.error('Error en OCR:', error);
+        mostrarResultado('❌ Error procesando imagen. Usa input manual.', 'no-encontrado');
+    }
+}
+
+// Iniciar escáner de cámara con OCR
 async function iniciarEscaner() {
     try {
-        console.log('Iniciando escáner...');
+        console.log('Iniciando escáner con OCR...');
         const video = document.getElementById('video');
         
         stream = await navigator.mediaDevices.getUserMedia({
             video: { 
                 facingMode: 'environment',
-                width: { ideal: 640 },
-                height: { ideal: 480 }
+                width: { ideal: 1280 }, // Mayor resolución para OCR
+                height: { ideal: 720 }
             }
         });
         
@@ -131,70 +197,40 @@ async function iniciarEscaner() {
         document.getElementById('start-scan').style.display = 'none';
         document.getElementById('stop-scan').style.display = 'inline-block';
         
-        scanning = true;
-        mostrarResultado('📷 Cámara activa. Enfoca el código de barras de la cédula.', 'encontrado');
+        // Agregar botón de captura
+        const captureBtn = document.getElementById('capture-btn') || createCaptureButton();
+        captureBtn.style.display = 'inline-block';
         
-        // Inicializar QuaggaJS si está disponible
-        if (typeof Quagga !== 'undefined') {
-            console.log('Inicializando QuaggaJS...');
-            
-            Quagga.init({
-                inputStream: {
-                    name: "Live",
-                    type: "LiveStream",
-                    target: video,
-                    constraints: {
-                        width: 640,
-                        height: 480,
-                        facingMode: "environment"
-                    }
-                },
-                decoder: {
-                    readers: [
-                        "code_128_reader",
-                        "ean_reader",
-                        "ean_8_reader", 
-                        "code_39_reader"
-                    ]
-                }
-            }, function(err) {
-                if (err) {
-                    console.error('Error QuaggaJS:', err);
-                    return;
-                }
-                Quagga.start();
-            });
-            
-            Quagga.onDetected(function(data) {
-                if (scanning) {
-                    const codigo = data.codeResult.code;
-                    console.log('Código detectado:', codigo);
-                    
-                    // Verificar que sea un código válido
-                    if (/^\d{4,15}$/.test(codigo)) {
-                        scanning = false; // Pausar para evitar múltiples detecciones
-                        
-                        mostrarResultado(`📱 Código detectado: ${codigo}`, 'encontrado');
-                        
-                        setTimeout(() => {
-                            buscarYResaltarEnSheet(codigo);
-                        }, 1000);
-                        
-                        // Reactivar después de un momento
-                        setTimeout(() => {
-                            if (stream) scanning = true;
-                        }, 6000);
-                    }
-                }
-            });
-        } else {
-            mostrarResultado('📷 Cámara activa. QuaggaJS no disponible - usa el campo manual.', 'encontrado');
-        }
+        scanning = true;
+        mostrarResultado('📷 Cámara lista. Enfoca la cédula y presiona "Escanear Cédula" para procesarla.', 'encontrado');
         
     } catch (error) {
         console.error('Error con cámara:', error);
         mostrarResultado('❌ No se puede acceder a la cámara. Usa el campo manual.', 'no-encontrado');
     }
+}
+
+// Crear botón de captura si no existe
+function createCaptureButton() {
+    const button = document.createElement('button');
+    button.id = 'capture-btn';
+    button.innerHTML = '📸 Escanear Cédula';
+    button.onclick = capturarYProcesarOCR;
+    button.style.display = 'none';
+    button.style.margin = '10px 5px';
+    button.style.padding = '12px 20px';
+    button.style.backgroundColor = '#28a745';
+    button.style.color = 'white';
+    button.style.border = 'none';
+    button.style.borderRadius = '5px';
+    button.style.fontSize = '16px';
+    button.style.cursor = 'pointer';
+    
+    // Insertar después del botón de detener
+    const buttonsDiv = document.querySelector('.buttons');
+    buttonsDiv.appendChild(button);
+    
+    return button;
 }
 
 function detenerEscaner() {
@@ -203,23 +239,22 @@ function detenerEscaner() {
         stream = null;
     }
     
-    if (typeof Quagga !== 'undefined') {
-        Quagga.stop();
-    }
-    
     scanning = false;
     
     document.getElementById('start-scan').style.display = 'inline-block';
     document.getElementById('stop-scan').style.display = 'none';
     
+    const captureBtn = document.getElementById('capture-btn');
+    if (captureBtn) {
+        captureBtn.style.display = 'none';
+    }
+    
     const video = document.getElementById('video');
     video.srcObject = null;
     
-    mostrarResultado('📱 Escáner detenido', 'encontrado');
     setTimeout(() => {
         document.getElementById('manual-cedula').focus();
-        document.getElementById('resultado').style.display = 'none';
-    }, 2000);
+    }, 1000);
 }
 
 function mostrarResultado(mensaje, tipo) {
@@ -232,10 +267,10 @@ function mostrarResultado(mensaje, tipo) {
 }
 
 function guardarURL() {
-    mostrarResultado('ℹ️ Sistema funcionando - Apps Script conectado', 'encontrado');
+    mostrarResultado('ℹ️ Sistema con OCR para cédulas colombianas', 'encontrado');
     setTimeout(() => {
         document.getElementById('resultado').style.display = 'none';
     }, 2000);
 }
 
-console.log('App cargada - Versión limpia sin errores de consola');
+console.log('App con OCR cargada');
