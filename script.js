@@ -9,62 +9,133 @@ const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 let datosSheet = [];
 let stream = null;
 let scanning = false;
-let gapi;
 let isSignedIn = false;
 let gapiLoaded = false;
+let apiInitialized = false;
 
-// Cargar Google API
+// Variable global para verificar si gapi está disponible
+let gapiCheckInterval;
+
+// Cargar Google API de forma más robusta
 function loadGoogleAPI() {
-    const script = document.createElement('script');
-    script.src = 'https://apis.google.com/js/api.js';
-    script.onload = initializeGapi;
-    document.head.appendChild(script);
+    return new Promise((resolve, reject) => {
+        // Verificar si ya está cargado
+        if (window.gapi) {
+            console.log('GAPI ya estaba cargado');
+            resolve();
+            return;
+        }
+
+        const script = document.createElement('script');
+        script.src = 'https://apis.google.com/js/api.js';
+        script.async = true;
+        script.defer = true;
+        
+        script.onload = () => {
+            console.log('Script GAPI cargado');
+            // Esperar a que gapi esté disponible
+            let attempts = 0;
+            const maxAttempts = 50;
+            
+            gapiCheckInterval = setInterval(() => {
+                attempts++;
+                if (window.gapi) {
+                    clearInterval(gapiCheckInterval);
+                    console.log('GAPI disponible después de', attempts, 'intentos');
+                    resolve();
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(gapiCheckInterval);
+                    console.error('GAPI no se cargó después de', attempts, 'intentos');
+                    reject(new Error('GAPI no disponible'));
+                }
+            }, 100);
+        };
+        
+        script.onerror = () => {
+            console.error('Error cargando script GAPI');
+            reject(new Error('Error cargando GAPI script'));
+        };
+        
+        document.head.appendChild(script);
+    });
 }
 
 // Inicializar Google API
 async function initializeGapi() {
-    return new Promise((resolve) => {
-        gapi.load('auth2:client', async () => {
-            try {
-                await gapi.client.init({
-                    apiKey: API_KEY,
-                    clientId: CLIENT_ID,
-                    discoveryDocs: [DISCOVERY_DOC],
-                    scope: SCOPES
-                });
-                
-                const authInstance = gapi.auth2.getAuthInstance();
-                isSignedIn = authInstance.isSignedIn.get();
-                gapiLoaded = true;
-                
-                console.log('Google API inicializada. Signed in:', isSignedIn);
-                resolve();
-                
-            } catch (error) {
-                console.error('Error inicializando Google API:', error);
-                gapiLoaded = false;
-                resolve();
-            }
+    try {
+        console.log('Inicializando GAPI...');
+        
+        if (!window.gapi) {
+            throw new Error('GAPI no está disponible');
+        }
+
+        return new Promise((resolve, reject) => {
+            window.gapi.load('auth2:client', {
+                callback: async () => {
+                    try {
+                        console.log('Cargando cliente GAPI...');
+                        
+                        await window.gapi.client.init({
+                            apiKey: API_KEY,
+                            clientId: CLIENT_ID,
+                            discoveryDocs: [DISCOVERY_DOC],
+                            scope: SCOPES
+                        });
+                        
+                        const authInstance = window.gapi.auth2.getAuthInstance();
+                        isSignedIn = authInstance.isSignedIn.get();
+                        gapiLoaded = true;
+                        apiInitialized = true;
+                        
+                        console.log('GAPI inicializado exitosamente. Autorizado:', isSignedIn);
+                        resolve();
+                        
+                    } catch (error) {
+                        console.error('Error inicializando cliente GAPI:', error);
+                        reject(error);
+                    }
+                },
+                onerror: (error) => {
+                    console.error('Error cargando módulos GAPI:', error);
+                    reject(error);
+                }
+            });
         });
-    });
+        
+    } catch (error) {
+        console.error('Error en initializeGapi:', error);
+        gapiLoaded = false;
+        apiInitialized = false;
+        throw error;
+    }
 }
 
 // Cargar datos y API al iniciar
 document.addEventListener('DOMContentLoaded', async function() {
+    console.log('DOM cargado, iniciando app...');
+    
     // Ocultar configuración
     const configDiv = document.querySelector('.config');
     if (configDiv) {
         configDiv.style.display = 'none';
     }
     
-    // Cargar datos CSV
+    // Cargar datos CSV primero
     await cargarDatos();
-    
-    // Cargar Google API en paralelo
-    loadGoogleAPI();
     
     // Configurar eventos
     setupEventListeners();
+    
+    // Cargar Google API en segundo plano
+    try {
+        console.log('Cargando Google API...');
+        await loadGoogleAPI();
+        await initializeGapi();
+        console.log('Google API lista para usar');
+    } catch (error) {
+        console.error('No se pudo cargar Google API:', error);
+        mostrarResultado('⚠️ Google API no disponible. Búsqueda funcionará, pero sin resaltado.', 'no-encontrado');
+    }
 });
 
 // Configurar event listeners
@@ -133,40 +204,62 @@ async function cargarDatos() {
 
 // Autorizar con Google
 async function authorize() {
-    if (!gapiLoaded) {
-        mostrarResultado('⏳ Cargando Google API...', 'encontrado');
-        await initializeGapi();
-    }
+    console.log('Intentando autorizar...');
     
     try {
-        const authInstance = gapi.auth2.getAuthInstance();
+        // Verificar si API está lista
+        if (!apiInitialized) {
+            console.log('API no inicializada, intentando cargar...');
+            mostrarResultado('⏳ Preparando Google API...', 'encontrado');
+            
+            try {
+                await loadGoogleAPI();
+                await initializeGapi();
+            } catch (error) {
+                console.error('No se pudo cargar API:', error);
+                mostrarResultado('❌ No se pudo conectar con Google. Inténtalo más tarde.', 'no-encontrado');
+                return false;
+            }
+        }
+        
+        console.log('Solicitando autorización...');
+        mostrarResultado('🔐 Solicitando permisos...', 'encontrado');
+        
+        const authInstance = window.gapi.auth2.getAuthInstance();
+        
         if (!authInstance.isSignedIn.get()) {
             await authInstance.signIn();
         }
+        
         isSignedIn = true;
         mostrarResultado('✅ Autorizado con Google', 'encontrado');
+        console.log('Autorización exitosa');
+        
         return true;
+        
     } catch (error) {
         console.error('Error de autorización:', error);
-        mostrarResultado('❌ Error de autorización. Inténtalo de nuevo.', 'no-encontrado');
+        mostrarResultado('❌ Error de autorización. Verifica permisos.', 'no-encontrado');
         return false;
     }
 }
 
 // Resaltar fila en Google Sheets
 async function resaltarFila(numeroFila) {
-    if (!gapiLoaded) {
-        console.log('API no cargada, esperando...');
+    if (!apiInitialized) {
+        console.log('API no inicializada para resaltar');
         return false;
     }
     
     if (!isSignedIn) {
-        console.log('No autorizado, pidiendo autorización...');
+        console.log('No autorizado, solicitando autorización...');
         const authorized = await authorize();
         if (!authorized) return false;
     }
     
     try {
+        console.log(`Resaltando fila ${numeroFila}...`);
+        
         const requests = [{
             updateCells: {
                 range: {
@@ -192,19 +285,20 @@ async function resaltarFila(numeroFila) {
             }
         }];
         
-        await gapi.client.sheets.spreadsheets.batchUpdate({
+        const response = await window.gapi.client.sheets.spreadsheets.batchUpdate({
             spreadsheetId: SPREADSHEET_ID,
             requestBody: { requests }
         });
         
-        console.log(`Fila ${numeroFila} resaltada exitosamente`);
+        console.log(`Fila ${numeroFila} resaltada exitosamente`, response);
         return true;
         
     } catch (error) {
         console.error('Error resaltando fila:', error);
         
         if (error.status === 401 || error.status === 403) {
-            console.log('Error de permisos, pidiendo autorización...');
+            console.log('Error de permisos, reintentando autorización...');
+            isSignedIn = false;
             const authorized = await authorize();
             if (authorized) {
                 return await resaltarFila(numeroFila);
@@ -257,26 +351,37 @@ async function buscarCedulaEnDatos(cedula) {
             navigator.vibrate([200, 100, 200]);
         }
         
-        // Resaltar en Google Sheets
+        // Intentar resaltar en Google Sheets
         setTimeout(async () => {
-            const resaltado = await resaltarFila(encontrado.fila);
-            
-            if (resaltado) {
-                mostrarResultado(
-                    `✅ ENCONTRADO Y RESALTADO<br>
-                    <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
-                    <strong>Cédula:</strong> ${encontrado.cedula}<br>
-                    <strong>Email:</strong> ${encontrado.email}<br>
-                    <small style="color: green;">🎨 Fila ${encontrado.fila} resaltada en verde oliva</small>`, 
-                    'encontrado'
-                );
+            if (apiInitialized) {
+                const resaltado = await resaltarFila(encontrado.fila);
+                
+                if (resaltado) {
+                    mostrarResultado(
+                        `✅ ENCONTRADO Y RESALTADO<br>
+                        <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
+                        <strong>Cédula:</strong> ${encontrado.cedula}<br>
+                        <strong>Email:</strong> ${encontrado.email}<br>
+                        <small style="color: green;">🎨 Fila ${encontrado.fila} resaltada en verde oliva</small>`, 
+                        'encontrado'
+                    );
+                } else {
+                    mostrarResultado(
+                        `✅ ENCONTRADO<br>
+                        <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
+                        <strong>Cédula:</strong> ${encontrado.cedula}<br>
+                        <strong>Email:</strong> ${encontrado.email}<br>
+                        <small style="color: orange;">⚠️ No se pudo resaltar. <button onclick="authorize()" style="font-size:12px; padding:2px 8px; background:#4285f4; color:white; border:none; border-radius:3px; cursor:pointer;">Autorizar Google</button></small>`, 
+                        'encontrado'
+                    );
+                }
             } else {
                 mostrarResultado(
                     `✅ ENCONTRADO<br>
                     <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
                     <strong>Cédula:</strong> ${encontrado.cedula}<br>
                     <strong>Email:</strong> ${encontrado.email}<br>
-                    <small style="color: orange;">⚠️ No se pudo resaltar. <button onclick="authorize()" style="font-size:12px;">Autorizar Google</button></small>`, 
+                    <small style="color: gray;">ℹ️ Google API no disponible (resaltado deshabilitado)</small>`, 
                     'encontrado'
                 );
             }
@@ -291,7 +396,7 @@ async function buscarCedulaEnDatos(cedula) {
     }
 }
 
-// Funciones de cámara (mantenidas pero simplificadas)
+// Funciones de cámara (simplificadas)
 async function iniciarEscaner() {
     try {
         if (!datosSheet.length) {
@@ -348,7 +453,7 @@ function mostrarResultado(mensaje, tipo) {
 
 // Función dummy para compatibilidad
 function guardarURL() {
-    mostrarResultado('ℹ️ URL ya configurada', 'encontrado');
+    mostrarResultado('ℹ️ URL ya configurada automáticamente', 'encontrado');
     setTimeout(() => {
         document.getElementById('resultado').style.display = 'none';
     }, 2000);
