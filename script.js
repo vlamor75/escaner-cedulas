@@ -1,191 +1,16 @@
 // Configuración
 const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSHSkIJWa2Ac2IhTjzcclUIWEWcdIzX8_2pEOLBQZ8QiIjiautmRYf-QWQpP9LnbAsricEF617yAv6V/pub?gid=0&single=true&output=csv';
-const SPREADSHEET_ID = '183ahrrdVdI8nT8dQfR-k1xI0ReqCtaVNZCg3LjP2oSw';
-const CLIENT_ID = '126302235387-6akve29ev699n4qu7mmc4vhp3n0phdtb.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
+
+// URL de tu Google Apps Script Web App
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzkb8Gr9djEGppAS6-rqgzHi-ctPseXoGpsROdmO3z4kUMpv7v0iV8YGrKiGAIkLu6Zjg/exec';
 
 let datosSheet = [];
 let stream = null;
 let scanning = false;
-let accessToken = null;
-let tokenClient = null;
-let gapiInited = false;
-let gisInited = false;
 
-// Cargar Google APIs (nueva versión)
-function loadGoogleAPIs() {
-    // Cargar Google API Client
-    const gapiScript = document.createElement('script');
-    gapiScript.src = 'https://apis.google.com/js/api.js';
-    gapiScript.onload = gapiLoaded;
-    gapiScript.onerror = () => {
-        console.error('Error cargando GAPI');
-        mostrarEstadoAPI('❌ Error cargando Google API');
-    };
-    document.head.appendChild(gapiScript);
-
-    // Cargar Google Identity Services
-    const gisScript = document.createElement('script');
-    gisScript.src = 'https://accounts.google.com/gsi/client';
-    gisScript.onload = gisLoaded;
-    gisScript.onerror = () => {
-        console.error('Error cargando GIS');
-        mostrarEstadoAPI('❌ Error cargando Google Identity');
-    };
-    document.head.appendChild(gisScript);
-}
-
-// GAPI cargado
-async function gapiLoaded() {
-    await gapi.load('client', initializeGapiClient);
-}
-
-// Inicializar cliente GAPI
-async function initializeGapiClient() {
-    try {
-        await gapi.client.init({
-            discoveryDocs: ['https://sheets.googleapis.com/$discovery/rest?version=v4'],
-        });
-        gapiInited = true;
-        console.log('GAPI inicializado');
-        checkAPIsReady();
-    } catch (error) {
-        console.error('Error inicializando GAPI:', error);
-        mostrarEstadoAPI('❌ Error inicializando Google API');
-    }
-}
-
-// GIS cargado
-function gisLoaded() {
-    tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: (response) => {
-            if (response.error !== undefined) {
-                console.error('Error de autenticación:', response);
-                mostrarResultado('❌ Error de autenticación', 'no-encontrado');
-                return;
-            }
-            accessToken = response.access_token;
-            console.log('Token obtenido exitosamente');
-            mostrarResultado('✅ Autorizado con Google', 'encontrado');
-        },
-    });
-    gisInited = true;
-    console.log('GIS inicializado');
-    checkAPIsReady();
-}
-
-// Verificar si las APIs están listas
-function checkAPIsReady() {
-    if (gapiInited && gisInited) {
-        console.log('Todas las APIs están listas');
-        mostrarEstadoAPI('✅ Google APIs listas');
-    }
-}
-
-// Mostrar estado de la API
-function mostrarEstadoAPI(mensaje) {
-    console.log(mensaje);
-    // Solo mostrar en consola para no saturar la interfaz
-}
-
-// Solicitar autorización
-function authorize() {
-    if (!gisInited) {
-        mostrarResultado('⏳ Preparando autorización...', 'encontrado');
-        return;
-    }
-    
-    if (accessToken) {
-        console.log('Ya tienes token válido');
-        mostrarResultado('✅ Ya estás autorizado', 'encontrado');
-        return;
-    }
-
-    mostrarResultado('🔐 Solicitando permisos de Google...', 'encontrado');
-    tokenClient.requestAccessToken({ prompt: 'consent' });
-}
-
-// Revocar autorización
-function revokeAuthorization() {
-    if (accessToken) {
-        google.accounts.oauth2.revoke(accessToken);
-        accessToken = null;
-        mostrarResultado('🚪 Autorización revocada', 'no-encontrado');
-    }
-}
-
-// Resaltar fila en Google Sheets
-async function resaltarFila(numeroFila) {
-    if (!gapiInited) {
-        console.log('GAPI no inicializado');
-        return false;
-    }
-    
-    if (!accessToken) {
-        console.log('Sin token de acceso, solicitando autorización...');
-        authorize();
-        return false;
-    }
-
-    try {
-        console.log(`Resaltando fila ${numeroFila}...`);
-        
-        // Configurar token de acceso
-        gapi.client.setToken({ access_token: accessToken });
-        
-        const requests = [{
-            updateCells: {
-                range: {
-                    sheetId: 0,
-                    startRowIndex: numeroFila - 1,
-                    endRowIndex: numeroFila,
-                    startColumnIndex: 0,
-                    endColumnIndex: 10
-                },
-                rows: [{
-                    values: Array(10).fill({
-                        userEnteredFormat: {
-                            backgroundColor: {
-                                red: 0.5,   // Verde oliva
-                                green: 0.7,
-                                blue: 0.2,
-                                alpha: 1.0
-                            }
-                        }
-                    })
-                }],
-                fields: 'userEnteredFormat.backgroundColor'
-            }
-        }];
-        
-        const response = await gapi.client.sheets.spreadsheets.batchUpdate({
-            spreadsheetId: SPREADSHEET_ID,
-            requestBody: { requests }
-        });
-        
-        console.log(`Fila ${numeroFila} resaltada exitosamente`);
-        return true;
-        
-    } catch (error) {
-        console.error('Error resaltando fila:', error);
-        
-        if (error.status === 401) {
-            console.log('Token expirado, solicitando nuevo...');
-            accessToken = null;
-            authorize();
-            return false;
-        }
-        
-        mostrarResultado('❌ Error resaltando en Google Sheets', 'no-encontrado');
-        return false;
-    }
-}
-
-// Cargar datos al iniciar
-document.addEventListener('DOMContentLoaded', async function() {
-    console.log('DOM cargado, iniciando app...');
+// Cargar al iniciar
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('App iniciada - Versión con Apps Script');
     
     // Ocultar configuración
     const configDiv = document.querySelector('.config');
@@ -193,40 +18,49 @@ document.addEventListener('DOMContentLoaded', async function() {
         configDiv.style.display = 'none';
     }
     
-    // Cargar datos CSV
-    await cargarDatos();
+    // Cargar datos para verificación local
+    cargarDatos();
     
     // Configurar eventos
     setupEventListeners();
     
-    // Cargar Google APIs
-    loadGoogleAPIs();
+    // Mostrar estado inicial
+    mostrarResultado('📱 App lista para buscar y resaltar cédulas', 'encontrado');
+    setTimeout(() => {
+        document.getElementById('resultado').style.display = 'none';
+    }, 4000);
 });
 
-// Configurar event listeners
+// Configurar eventos del input
 function setupEventListeners() {
     const input = document.getElementById('manual-cedula');
     
+    // Buscar con Enter
     input.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             buscarCedula();
         }
     });
     
+    // Evitar zoom en iOS
     input.addEventListener('focus', function() {
         this.style.fontSize = '16px';
     });
     
+    // Solo permitir números
     input.addEventListener('input', function() {
         this.value = this.value.replace(/[^0-9]/g, '');
     });
+    
+    // Auto-focus para facilitar uso
+    setTimeout(() => {
+        input.focus();
+    }, 1000);
 }
 
-// Cargar datos del CSV
+// Cargar datos para verificación local (fallback)
 async function cargarDatos() {
     try {
-        mostrarResultado('🔄 Cargando datos...', 'encontrado');
-        
         const response = await fetch(CSV_URL);
         const csvData = await response.text();
         
@@ -251,42 +85,90 @@ async function cargarDatos() {
             }
         });
         
-        console.log('Datos cargados:', datosSheet.length, 'registros');
-        mostrarResultado(`✅ ${datosSheet.length} registros cargados`, 'encontrado');
-        
-        setTimeout(() => {
-            const resultado = document.getElementById('resultado');
-            if (resultado && resultado.innerHTML.includes('registros cargados')) {
-                resultado.style.display = 'none';
-            }
-        }, 3000);
+        console.log('Datos de fallback cargados:', datosSheet.length, 'registros');
         
     } catch (error) {
-        console.error('Error cargando datos:', error);
-        mostrarResultado('❌ Error cargando datos', 'no-encontrado');
+        console.error('Error cargando datos de fallback:', error);
     }
 }
 
-// Buscar cédula
-function buscarCedula() {
-    const input = document.getElementById('manual-cedula');
-    const cedula = input.value.trim();
-    
-    if (cedula) {
-        buscarCedulaEnDatos(cedula);
-        input.value = '';
-        input.focus();
+// Función principal: buscar y resaltar usando Apps Script
+async function buscarYResaltarEnSheet(cedula) {
+    try {
+        console.log('Enviando cédula a Apps Script:', cedula);
+        mostrarResultado('🔄 Buscando y resaltando...', 'encontrado');
+        
+        const response = await fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ cedula: cedula }),
+            mode: 'cors'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const resultado = await response.json();
+        console.log('Respuesta de Apps Script:', resultado);
+        
+        if (resultado.success && resultado.encontrado) {
+            // ¡Éxito! Persona encontrada y resaltada
+            mostrarResultado(
+                `✅ ENCONTRADO Y RESALTADO<br>
+                <strong style="font-size: 20px; color: #2e7d32;">${resultado.datos.nombre}</strong><br>
+                <strong>Cédula:</strong> ${resultado.datos.cedula}<br>
+                <strong>Email:</strong> ${resultado.datos.email}<br>
+                <div style="margin-top: 10px; padding: 8px; background: #e8f5e8; border-radius: 4px; font-size: 14px;">
+                    🎨 Fila ${resultado.fila} resaltada en verde oliva en Google Sheets
+                </div>`, 
+                'encontrado'
+            );
+            
+            // Vibración de éxito
+            if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200, 100, 200]);
+            }
+            
+        } else if (resultado.success && !resultado.encontrado) {
+            // No encontrado
+            mostrarResultado(
+                `❌ CÉDULA NO EXISTE<br>
+                <small style="color: #666;">Cédula ${cedula} no está en la base de datos</small>`, 
+                'no-encontrado'
+            );
+            
+            // Vibración de error
+            if (navigator.vibrate) {
+                navigator.vibrate([500, 200, 500]);
+            }
+            
+        } else {
+            // Error en la respuesta
+            throw new Error(resultado.message || 'Error desconocido en Apps Script');
+        }
+        
+    } catch (error) {
+        console.error('Error conectando con Apps Script:', error);
+        
+        mostrarResultado(
+            `⚠️ Error de conexión<br>
+            <small>Intentando búsqueda local...</small>`, 
+            'no-encontrado'
+        );
+        
+        // Fallback: buscar solo localmente
+        setTimeout(() => {
+            buscarCedulaLocal(cedula);
+        }, 1500);
     }
 }
 
-// Buscar en datos y resaltar
-async function buscarCedulaEnDatos(cedula) {
-    console.log('Buscando cédula:', cedula);
-    
-    if (!datosSheet.length) {
-        mostrarResultado('❌ Datos no cargados aún', 'no-encontrado');
-        return;
-    }
+// Búsqueda local como fallback (sin resaltado)
+function buscarCedulaLocal(cedula) {
+    console.log('Búsqueda local de fallback para:', cedula);
     
     const encontrado = datosSheet.find(persona => 
         persona.cedula === cedula || 
@@ -294,53 +176,22 @@ async function buscarCedulaEnDatos(cedula) {
     );
     
     if (encontrado) {
-        // Mostrar encontrado inmediatamente
         mostrarResultado(
-            `✅ ENCONTRADO<br>
+            `✅ ENCONTRADO (solo verificación)<br>
             <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
             <strong>Cédula:</strong> ${encontrado.cedula}<br>
             <strong>Email:</strong> ${encontrado.email}<br>
-            <small>🎨 Resaltando fila ${encontrado.fila}...</small>`, 
+            <div style="margin-top: 8px; padding: 6px; background: #fff3cd; border-radius: 4px; font-size: 13px; color: #856404;">
+                ⚠️ No se pudo conectar con Google Sheets para resaltar
+            </div>`, 
             'encontrado'
         );
         
-        // Vibrar
         if (navigator.vibrate) {
             navigator.vibrate([200, 100, 200]);
         }
-        
-        // Intentar resaltar después de un momento
-        setTimeout(async () => {
-            const resaltado = await resaltarFila(encontrado.fila);
-            
-            if (resaltado) {
-                mostrarResultado(
-                    `✅ ENCONTRADO Y RESALTADO<br>
-                    <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
-                    <strong>Cédula:</strong> ${encontrado.cedula}<br>
-                    <strong>Email:</strong> ${encontrado.email}<br>
-                    <small style="color: green;">🎨 Fila ${encontrado.fila} resaltada en verde oliva ✓</small>`, 
-                    'encontrado'
-                );
-            } else {
-                const estadoAuth = accessToken ? 'Reintentando...' : 'Necesitas autorización';
-                const botonAuth = !accessToken ? 
-                    `<button onclick="authorize()" style="font-size:12px; padding:4px 12px; background:#4285f4; color:white; border:none; border-radius:4px; cursor:pointer; margin-left:10px;">Autorizar Google</button>` : 
-                    '';
-                    
-                mostrarResultado(
-                    `✅ ENCONTRADO<br>
-                    <strong style="font-size: 18px;">${encontrado.nombre}</strong><br>
-                    <strong>Cédula:</strong> ${encontrado.cedula}<br>
-                    <strong>Email:</strong> ${encontrado.email}<br>
-                    <small style="color: orange;">⚠️ ${estadoAuth}${botonAuth}</small>`, 
-                    'encontrado'
-                );
-            }
-        }, 1000);
-        
     } else {
-        mostrarResultado(`❌ CÉDULA NO EXISTE<br><small>No encontrado: ${cedula}</small>`, 'no-encontrado');
+        mostrarResultado('❌ CÉDULA NO EXISTE', 'no-encontrado');
         
         if (navigator.vibrate) {
             navigator.vibrate([500]);
@@ -348,48 +199,165 @@ async function buscarCedulaEnDatos(cedula) {
     }
 }
 
-// Funciones de cámara (mantenidas)
+// Buscar cédula desde input manual
+function buscarCedula() {
+    const input = document.getElementById('manual-cedula');
+    const cedula = input.value.trim();
+    
+    if (cedula && cedula.length >= 4) {
+        buscarYResaltarEnSheet(cedula);
+        input.value = '';
+        
+        // Mantener foco para siguiente búsqueda después de un momento
+        setTimeout(() => {
+            input.focus();
+        }, 3000);
+    } else {
+        mostrarResultado('⚠️ Ingresa una cédula válida (mínimo 4 dígitos)', 'no-encontrado');
+        setTimeout(() => {
+            document.getElementById('resultado').style.display = 'none';
+        }, 2000);
+    }
+}
+
+// Iniciar escáner de cámara con QuaggaJS
 async function iniciarEscaner() {
     try {
-        if (!datosSheet.length) {
-            mostrarResultado('❌ Esperando datos...', 'no-encontrado');
-            return;
-        }
-
+        console.log('Iniciando escáner...');
         const video = document.getElementById('video');
+        
+        // Solicitar permisos de cámara
         stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment' }
+            video: { 
+                facingMode: 'environment', // Cámara trasera
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+            }
         });
         
         video.srcObject = stream;
-        video.play();
+        await video.play();
         
+        // Actualizar botones
         document.getElementById('start-scan').style.display = 'none';
         document.getElementById('stop-scan').style.display = 'inline-block';
         
         scanning = true;
-        mostrarResultado('📷 Cámara activa. Usa el campo manual.', 'encontrado');
+        mostrarResultado('📷 Cámara activa. Enfoca el código de barras de la cédula.', 'encontrado');
+        
+        // Inicializar QuaggaJS si está disponible
+        if (typeof Quagga !== 'undefined') {
+            console.log('Inicializando QuaggaJS...');
+            
+            Quagga.init({
+                inputStream: {
+                    name: "Live",
+                    type: "LiveStream",
+                    target: video,
+                    constraints: {
+                        width: 640,
+                        height: 480,
+                        facingMode: "environment"
+                    }
+                },
+                decoder: {
+                    readers: [
+                        "code_128_reader",
+                        "ean_reader",
+                        "ean_8_reader", 
+                        "code_39_reader",
+                        "code_93_reader",
+                        "i2of5_reader"
+                    ]
+                },
+                locate: true,
+                locator: {
+                    halfSample: true,
+                    patchSize: "medium"
+                }
+            }, function(err) {
+                if (err) {
+                    console.error('Error iniciando QuaggaJS:', err);
+                    mostrarResultado('📷 Cámara activa. Use el campo manual para mejores resultados.', 'encontrado');
+                    return;
+                }
+                
+                console.log('QuaggaJS iniciado correctamente');
+                Quagga.start();
+            });
+            
+            // Configurar detección de códigos
+            Quagga.onDetected(function(data) {
+                if (scanning) {
+                    const codigo = data.codeResult.code;
+                    console.log('Código detectado:', codigo);
+                    
+                    // Verificar que el código parezca una cédula (solo números, longitud razonable)
+                    if (/^\d{4,15}$/.test(codigo)) {
+                        scanning = false; // Pausar para evitar múltiples detecciones
+                        
+                        mostrarResultado(`📱 Código detectado: ${codigo}`, 'encontrado');
+                        
+                        // Buscar el código
+                        setTimeout(() => {
+                            buscarYResaltarEnSheet(codigo);
+                        }, 1000);
+                        
+                        // Reactivar scanning después de un momento
+                        setTimeout(() => {
+                            if (stream) { // Solo si el scanner sigue activo
+                                scanning = true;
+                            }
+                        }, 5000);
+                    } else {
+                        console.log('Código detectado no parece cédula:', codigo);
+                    }
+                }
+            });
+            
+        } else {
+            console.log('QuaggaJS no disponible - solo cámara visual');
+            mostrarResultado('📷 Cámara activa. QuaggaJS no disponible - usa el campo manual.', 'encontrado');
+        }
         
     } catch (error) {
-        mostrarResultado('❌ Error con cámara. Usa input manual.', 'no-encontrado');
+        console.error('Error accediendo a cámara:', error);
+        mostrarResultado('❌ No se puede acceder a la cámara. Verifica permisos y usa el campo manual.', 'no-encontrado');
     }
 }
 
+// Detener escáner
 function detenerEscaner() {
+    console.log('Deteniendo escáner...');
+    
     if (stream) {
         stream.getTracks().forEach(track => track.stop());
         stream = null;
     }
     
+    if (typeof Quagga !== 'undefined') {
+        Quagga.stop();
+    }
+    
     scanning = false;
+    
+    // Restaurar botones
     document.getElementById('start-scan').style.display = 'inline-block';
     document.getElementById('stop-scan').style.display = 'none';
     
     const video = document.getElementById('video');
     video.srcObject = null;
+    
+    mostrarResultado('📱 Escáner detenido. Usa el campo manual para buscar.', 'encontrado');
+    
+    // Auto-focus en el input
+    setTimeout(() => {
+        document.getElementById('manual-cedula').focus();
+        document.getElementById('resultado').style.display = 'none';
+    }, 2000);
 }
 
-// Mostrar resultado
+// Mostrar resultado en la interfaz
 function mostrarResultado(mensaje, tipo) {
     const resultado = document.getElementById('resultado');
     if (resultado) {
@@ -403,14 +371,15 @@ function mostrarResultado(mensaje, tipo) {
     }
 }
 
-// Función para compatibilidad
+// Función para compatibilidad con HTML
 function guardarURL() {
-    mostrarResultado('ℹ️ URL ya configurada', 'encontrado');
+    mostrarResultado('ℹ️ Configuración automática activa - Google Apps Script conectado', 'encontrado');
     setTimeout(() => {
         document.getElementById('resultado').style.display = 'none';
-    }, 2000);
+    }, 3000);
 }
 
-// Funciones globales para debug
-window.authorize = authorize;
-window.revokeAuthorization = revokeAuthorization;
+// Debug - mostrar información en consola
+console.log('Script cargado correctamente');
+console.log('Apps Script URL:', APPS_SCRIPT_URL);
+console.log('CSV URL:', CSV_URL);
